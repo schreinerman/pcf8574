@@ -180,6 +180,63 @@ en_result_t Pcf8574_Deinit(stc_pcf8574_handle_t* pstcHandle, stc_pcf8574_list_it
 }
 
 /**
+ ** \brief Init callback for a specific GPIO
+ **
+ ** \param pstcHandle Pointer of handle
+ **
+ ** \param u8Bit Bit to address  between 0..7
+ **
+ ** \param enType IRQ type, can be Pcf8574RisingEdge, Pcf8574FallingEdge, Pcf8574RisingFallingEdge
+ **
+ ** \param pfnCallback Callback of type pfn_pcf8574_callback_t, example: void Pcf8574Callback(void* pHandle, uint8_t u8Pin);
+ **
+ ** \returns Ok on success
+ */
+en_result_t Pcf8574_InitCallback(stc_pcf8574_handle_t* pstcHandle, uint8_t u8Bit, en_pcf8574_irq_trigger_t enType, pfn_pcf8574_callback_t pfnCallback)
+{
+    if (pstcHandle == NULL)
+    {
+        return ErrorUninitialized;
+    }
+    if (pfnCallback == NULL)
+    {
+        return ErrorUninitialized;
+    }
+    if (u8Bit > 7)
+    {
+        return ErrorInvalidParameter;
+    }
+    pstcHandle->astcCallbacks[u8Bit].enType = enType;
+    pstcHandle->astcCallbacks[u8Bit].pfnCallback = pfnCallback;
+    return Ok;
+}
+
+/**
+ ** \brief Deinit callback for a specific GPIO
+ **
+ ** \param pstcHandle Pointer of handle
+ **
+ ** \param u8Bit Bit to address  between 0..7
+ **
+ ** \returns Ok on success
+ */
+en_result_t Pcf8574_DeinitCallback(stc_pcf8574_handle_t* pstcHandle, uint8_t u8Bit)
+{
+    if (pstcHandle == NULL)
+    {
+        return ErrorUninitialized;
+    }
+    if (u8Bit > 7)
+    {
+        return ErrorInvalidParameter;
+    }
+    pstcHandle->astcCallbacks[u8Bit].enType = Pcf8574IrqNone;
+    pstcHandle->astcCallbacks[u8Bit].pfnCallback = NULL;
+    return Ok;
+}
+
+
+/**
  ** \brief Read from PCF8574 handle
  **
  ** \param pstcHandle Pointer of handle
@@ -219,7 +276,7 @@ void Pcf8574_Write(stc_pcf8574_handle_t* pstcHandle, uint8_t u8Value)
  **
  ** \param pstcHandle Handle
  */
-void ExecuteIrqHandle(stc_pcf8574_handle_t* pstcHandle)
+void Pcf8574_ExecuteIrqHandle(stc_pcf8574_handle_t* pstcHandle)
 {
     uint8_t u8Tmp;
     uint8_t u8Changes;
@@ -259,13 +316,13 @@ void ExecuteIrqHandle(stc_pcf8574_handle_t* pstcHandle)
 /**
  ** \brief Execute IRQ handling caused by INT pin for all devices in the list
  */
-void ExtIrqHandle(void)
+void Pcf8574_ExtIrqHandle(void)
 {
     stc_pcf8574_list_item_t* pstcCurrent = pstcListRoot;
-    if (pstcListRoot == NULL)
-    while(pstcCurrent->pstcNext != NULL)
+    if (pstcListRoot == NULL) return;
+    while(pstcCurrent != NULL)
     {
-        ExecuteIrqHandle(pstcCurrent->Handle);
+        Pcf8574_ExecuteIrqHandle(pstcCurrent->Handle);
         pstcCurrent = pstcCurrent->pstcNext;
     }
 }
