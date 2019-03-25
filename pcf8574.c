@@ -24,7 +24,8 @@
  ** @link Pcf8574Group file description @endlink
  **
  ** History:
- ** - 2019-2-3  1.00  Manuel Schreiner
+ ** - 2019-2-3   1.00  Manuel Schreiner First version
+ ** - 2019-3-25  1.10  Manuel Schreiner Added rotady endcoder support
  *******************************************************************************
  */
 
@@ -64,7 +65,9 @@
  *******************************************************************************
  */
 
-static stc_pcf8574_list_item_t* pstcListRoot = NULL;
+static stc_pcf8574_list_item_t* pstcPcf8574ListRoot = NULL;
+static volatile boolean_t bLock = FALSE;
+static volatile boolean_t bHandleIrq = FALSE;
 
 /**
  *******************************************************************************
@@ -87,19 +90,19 @@ static stc_pcf8574_list_item_t* pstcListRoot = NULL;
  */
 static void ListItemAdd(stc_pcf8574_list_item_t* pstcListItem)
 {
-    stc_pcf8574_list_item_t* pstcCurrent = pstcListRoot;
-    if (pstcListRoot == NULL) 
+    stc_pcf8574_list_item_t* pstcCurrent = pstcPcf8574ListRoot;
+    if (pstcPcf8574ListRoot == NULL) 
     {
-        pstcListRoot = pstcListItem;
-        pstcListRoot->pstcNext = NULL;
+        pstcPcf8574ListRoot = pstcListItem;
+        pstcPcf8574ListRoot->Next = NULL;
         return;
     }
-    while(pstcCurrent->pstcNext != NULL)
+    while(pstcCurrent->Next != NULL)
     {
-        pstcCurrent = pstcCurrent->pstcNext;
+        pstcCurrent = pstcCurrent->Next;
     }
-    pstcCurrent->pstcNext = pstcListItem;
-    pstcListItem->pstcNext = NULL;
+    pstcCurrent->Next = pstcListItem;
+    pstcListItem->Next = NULL;
 }
 
 /**
@@ -110,24 +113,24 @@ static void ListItemAdd(stc_pcf8574_list_item_t* pstcListItem)
  */
 static void ListItemRemove(stc_pcf8574_list_item_t* pstcListItem)
 {
-    stc_pcf8574_list_item_t* pstcCurrent = pstcListRoot;
+    stc_pcf8574_list_item_t* pstcCurrent = pstcPcf8574ListRoot;
     stc_pcf8574_list_item_t* pstcLast = NULL;
-    if (pstcListItem == pstcListRoot)
+    if (pstcListItem == pstcPcf8574ListRoot)
     {
-        pstcListRoot = pstcListItem->pstcNext;
-        pstcListItem->pstcNext = NULL;
+        pstcPcf8574ListRoot = pstcListItem->Next;
+        pstcListItem->Next = NULL;
         return;
     }
     while(pstcCurrent != pstcListItem)
     {
         pstcLast = pstcCurrent;
-        pstcCurrent = pstcCurrent->pstcNext;
+        pstcCurrent = pstcCurrent->Next;
         if (pstcCurrent == NULL) return;
     }
     if (pstcLast != NULL)
     {
-        pstcLast->pstcNext = pstcCurrent->pstcNext;
-        pstcListItem->pstcNext = NULL;
+        pstcLast->Next = pstcCurrent->Next;
+        pstcListItem->Next = NULL;
     }
 }
 
@@ -150,6 +153,7 @@ en_result_t Pcf8574_Init(stc_pcf8574_handle_t* pstcHandle, stc_pcf8574_list_item
     if (pstcListItemOut != NULL)
     {
         pstcListItemOut->Handle = pstcHandle;
+        pstcListItemOut->enType = Pcf8574ListTypeNone;
         ListItemAdd(pstcListItemOut);
     }
     pstcHandle->pfnRead(pstcHandle->pI2cHandle,pstcHandle->u32Address,&pstcHandle->u8CurrentValues,1);
@@ -271,6 +275,31 @@ void Pcf8574_Write(stc_pcf8574_handle_t* pstcHandle, uint8_t u8Value)
     pstcHandle->pfnWrite(pstcHandle->pI2cHandle,pstcHandle->u32Address,&u8Value,1);
 }
 
+
+/**
+ ** \brief Init PCF8574 handle
+ **
+ ** \param pstcHandle Pointer of handle
+ **
+ ** \param pstcListItemOut Pointer to optional list item to add (will be configured automatically)
+ **
+ ** \returns Ok on success
+ */
+en_result_t Pcf8574_InitRotaryEncoder(stc_pcf8574_rotaryencoder_t* pstcHandle, stc_pcf8574_list_item_t* pstcListItemOut)
+{
+    Pcf8574_Init(pstcHandle->pHandle,NULL);
+    if (pstcListItemOut != NULL)
+    {
+        pstcListItemOut->Handle = pstcHandle;
+        pstcListItemOut->enType = Pcf8574ListTypeEncoder;
+        ListItemAdd(pstcListItemOut);
+    }
+    pstcHandle->pHandle->u8CurrentValues |= (1 << pstcHandle->A) | (1 << pstcHandle->B);
+    Pcf8574_Write(pstcHandle->pHandle,pstcHandle->pHandle->u8CurrentValues);
+    Pcf8574_Read(pstcHandle->pHandle);
+}
+
+
 /**
  ** \brief Execute IRQ handling caused by INT pin for a specific device
  **
@@ -314,16 +343,103 @@ void Pcf8574_ExecuteIrqHandle(stc_pcf8574_handle_t* pstcHandle)
 }
 
 /**
+ ** \brief Process type rotary encoder handle
+ **
+ ** \param pstcHandle Handle
+ */
+void Pcf8574_HandleRotaryEncoder(stc_pcf8574_rotaryencoder_t* pstcHandle)
+{
+    uint8_t u8Tmp,u8Changed;
+    pstcHandle->pHandle->pfnRead(pstcHandle->pHandle->pI2cHandle,pstcHandle->pHandle->u32Address,&u8Tmp,1);
+    u8Changed = pstcHandle->u8OldData ^ u8Tmp;
+    pstcHandle->u8OldData = u8Tmp;
+    if ((u8Changed & (1 << pstcHandle->Btn)) && ((u8Tmp & (1 << pstcHandle->Btn)) == 0))
+    {
+        pstcHandle->bButtonClicked = TRUE;
+        pstcHandle->bButton = FALSE;
+    } else if ((u8Changed & (1 << pstcHandle->Btn)) && ((u8Tmp & (1 << pstcHandle->Btn)) != 0))
+    {
+        pstcHandle->bButtonClicked = FALSE;
+        pstcHandle->u32LastPressedTime = 0;
+        pstcHandle->bButton = TRUE;
+    }
+
+    if ((u8Changed & (1 << pstcHandle->A)) && ((u8Tmp & (1 << pstcHandle->A)) == 0))
+    {
+        if (u8Tmp & (1 << pstcHandle->B))
+        {
+            pstcHandle->Counter++;
+        } else
+        {
+            pstcHandle->Counter--;
+        }
+    }
+}
+
+/**
  ** \brief Execute IRQ handling caused by INT pin for all devices in the list
  */
 void Pcf8574_ExtIrqHandle(void)
 {
-    stc_pcf8574_list_item_t* pstcCurrent = pstcListRoot;
-    if (pstcListRoot == NULL) return;
+    stc_pcf8574_list_item_t* pstcCurrent = pstcPcf8574ListRoot;
+    if (pstcPcf8574ListRoot == NULL) return;
+    bHandleIrq = TRUE;
+    if (bLock == FALSE)
+    {
+        bHandleIrq = FALSE;
+        while(pstcCurrent != NULL)
+        {
+            if (pstcCurrent->enType == Pcf8574ListTypeNone)
+            {
+                Pcf8574_ExecuteIrqHandle(pstcCurrent->Handle);
+            }
+            if (pstcCurrent->enType == Pcf8574ListTypeEncoder)
+            {
+                Pcf8574_HandleRotaryEncoder(pstcCurrent->Handle);
+            }
+            pstcCurrent = pstcCurrent->Next;
+        }
+    }
+}
+
+/**
+ ** \brief Lock interrupt handling
+ */
+void Pcf8574_LockIrq(void)
+{
+    bLock = TRUE;
+}
+
+/**
+ ** \brief Unlock interrupt handling
+ */
+void Pcf8574_UnlockIrq(void)
+{
+    bLock = FALSE;
+    if (bHandleIrq)
+    {
+        Pcf8574_ExtIrqHandle();
+    }
+}
+
+/**
+ ** \brief Called every ms for example via SysStick IRQ
+ */
+void Pcf8574_MsTickHandle(void)
+{
+    stc_pcf8574_list_item_t* pstcCurrent = pstcPcf8574ListRoot;
+    if (pstcPcf8574ListRoot == NULL) return;
+    
     while(pstcCurrent != NULL)
     {
-        Pcf8574_ExecuteIrqHandle(pstcCurrent->Handle);
-        pstcCurrent = pstcCurrent->pstcNext;
+        if (pstcCurrent->enType == Pcf8574ListTypeEncoder)
+        {
+            if (((stc_pcf8574_rotaryencoder_t*)pstcCurrent->Handle)->bButton)
+            {
+                ((stc_pcf8574_rotaryencoder_t*)pstcCurrent->Handle)->u32LastPressedTime++;
+            }
+        }
+        pstcCurrent = pstcCurrent->Next;
     }
 }
 

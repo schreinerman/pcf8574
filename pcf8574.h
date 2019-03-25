@@ -24,7 +24,8 @@
  ** @link Pcf8574Group file description @endlink
  **
  ** History:
- ** - 2019-2-3  1.00  Manuel Schreiner
+ ** - 2019-2-3   1.00  Manuel Schreiner First version
+ ** - 2019-3-25  1.10  Manuel Schreiner Added rotady endcoder support
  *******************************************************************************
  */
 
@@ -150,13 +151,19 @@ extern "C"
  *******************************************************************************
  */
 
-typedef struct stc_pcf8574_list_item stc_pcf8574_list_item_t;
+typedef enum en_pcf8574_list_item_type
+{
+  Pcf8574ListTypeNone = 0,
+  Pcf8574ListTypeEncoder = 1
+} en_pcf8574_list_item_type_t;
 
-struct stc_pcf8574_list_item
+
+typedef struct stc_pcf8574_list_item
 {
   void* Handle;
-  struct stc_pcf8574_list_item* pstcNext;
-};
+  en_pcf8574_list_item_type_t enType;
+  void* Next;
+} stc_pcf8574_list_item_t;
 
 /**
  ** \brief I2C read function
@@ -206,7 +213,23 @@ typedef struct stc_pcf8574_handle
     stc_pcf8574_irq_t astcCallbacks[8];
 } stc_pcf8574_handle_t;
 
-
+/**
+ ** \brief PCF8574 Rotary encoder handle
+ */
+typedef struct stc_pcf8574_rotaryencoder
+{
+    stc_pcf8574_handle_t* pHandle;
+    uint8_t A;
+    uint8_t B;
+    uint8_t Btn;
+    int32_t Counter;
+    int32_t CounterOld;
+    uint8_t u8OldData;
+    boolean_t bButtonClicked;
+    boolean_t bButton;
+    boolean_t bButtonOld;
+    uint32_t u32LastPressedTime;
+} stc_pcf8574_rotaryencoder_t;
 
 
 /**
@@ -227,8 +250,13 @@ en_result_t Pcf8574_InitCallback(stc_pcf8574_handle_t* pstcHandle, uint8_t u8Bit
 en_result_t Pcf8574_DeinitCallback(stc_pcf8574_handle_t* pstcHandle, uint8_t u8Bit);
 uint8_t Pcf8574_Read(stc_pcf8574_handle_t* pstcHandle);
 void Pcf8574_Write(stc_pcf8574_handle_t* pstcHandle, uint8_t u8Value);
+en_result_t Pcf8574_InitRotaryEncoder(stc_pcf8574_rotaryencoder_t* pstcHandle, stc_pcf8574_list_item_t* pstcListItemOut);
+void Pcf8574_HandleRotaryEncoder(stc_pcf8574_rotaryencoder_t* pstcHandle);
+void Pcf8574_MsTickHandle(void);
 void Pcf8574_ExecuteIrqHandle(stc_pcf8574_handle_t* pHandle);
 void Pcf8574_ExtIrqHandle(void);
+void Pcf8574_LockIrq(void);
+void Pcf8574_UnlockIrq(void);
 
 //@} // Pcf8574Group
 
